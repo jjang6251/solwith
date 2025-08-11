@@ -9,4 +9,6 @@ public interface MemberService {
     Member join(Member member);
     List<Member> findMembers();
     Member findOne(Long id);
+    Member update(Long id, String name);
+    void delete(Long id);
 }

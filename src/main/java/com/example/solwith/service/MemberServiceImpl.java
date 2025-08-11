@@ -33,5 +33,18 @@ public class MemberServiceImpl implements MemberService{
         return memberRepository.findById(id).orElse(null);
     }
 
+    @Override
+    public Member update(Long id, String name) {
+        Member m = findOne(id);
+        m.setName(name);
+        return m;
+    }
+
+    @Override
+    public void delete(Long id) {
+        Member m = findOne(id);
+        m.setName("[DELETED]");
+    }
+
 
 }
