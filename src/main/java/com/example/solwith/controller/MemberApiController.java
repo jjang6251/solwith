@@ -6,6 +6,7 @@ import com.example.solwith.dto.MemberCreateRequest;
 import com.example.solwith.dto.MemberResponse;
 import com.example.solwith.dto.MemberUpdateRequest;
 import com.example.solwith.service.MemberService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -37,13 +38,30 @@ public class MemberApiController {
 //                .toList();
 //    }
 
-    //API RESPONSE 포맷 개선 후
+    //API RESPONSE 포맷 개선 후 1
+//    @GetMapping
+//    public ApiResponse<List<MemberResponse>> list() {
+//        List<MemberResponse> responses = memberService.findMembers().stream()
+//                .map(m -> new MemberResponse(m.getId(), m.getName()))
+//                .toList();
+//        return ApiResponse.success(responses);
+//    }
+
+
+
+    //API RESPONSE 포맷 개선 2
+
+    private String traceId(HttpServletRequest req){
+        Object v = req.getAttribute("traceId");
+        return v != null ? v.toString() : null;
+    }
+
     @GetMapping
-    public ApiResponse<List<MemberResponse>> list() {
-        List<MemberResponse> responses = memberService.findMembers().stream()
+    public ApiResponse<List<MemberResponse>> list(HttpServletRequest req) {
+        var data = memberService.findMembers().stream()
                 .map(m -> new MemberResponse(m.getId(), m.getName()))
                 .toList();
-        return ApiResponse.success(responses);
+        return ApiResponse.success(data, req.getRequestURI(), traceId(req));
     }
 
     // READ one 200
@@ -54,10 +72,18 @@ public class MemberApiController {
 //        return new MemberResponse(m.getId(), m.getName());
 //    }
 
+    // API RESPONSE 포맷 개선 후 1
+//    @GetMapping("/{id}")
+//    public ApiResponse<MemberResponse> get(@PathVariable Long id) {
+//        Member m = memberService.findOne(id);
+//        return ApiResponse.success(new MemberResponse(m.getId(), m.getName()));
+//    }
+
+    // API RESPONSE 포맷 개선 후 2
     @GetMapping("/{id}")
-    public ApiResponse<MemberResponse> get(@PathVariable Long id) {
+    public ApiResponse<MemberResponse> get(@PathVariable Long id, HttpServletRequest req) {
         Member m = memberService.findOne(id);
-        return ApiResponse.success(new MemberResponse(m.getId(), m.getName()));
+        return ApiResponse.success(new MemberResponse(m.getId(), m.getName()), req.getRequestURI(), traceId(req));
     }
 
     // UPDATE 200 (또는 204)
