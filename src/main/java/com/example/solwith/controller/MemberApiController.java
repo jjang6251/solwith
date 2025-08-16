@@ -1,5 +1,6 @@
 package com.example.solwith.controller;
 
+import com.example.solwith.common.ApiResponse;
 import com.example.solwith.domain.Member;
 import com.example.solwith.dto.MemberCreateRequest;
 import com.example.solwith.dto.MemberResponse;
@@ -28,18 +29,35 @@ public class MemberApiController {
     }
 
     // READ all 200
+    // API RESPONSE 포맷 개선 전
+//    @GetMapping
+//    public List<MemberResponse> list(){
+//        return memberService.findMembers().stream()
+//                .map(m -> new MemberResponse(m.getId(), m.getName()))
+//                .toList();
+//    }
+
+    //API RESPONSE 포맷 개선 후
     @GetMapping
-    public List<MemberResponse> list(){
-        return memberService.findMembers().stream()
+    public ApiResponse<List<MemberResponse>> list() {
+        List<MemberResponse> responses = memberService.findMembers().stream()
                 .map(m -> new MemberResponse(m.getId(), m.getName()))
                 .toList();
+        return ApiResponse.success(responses);
     }
 
     // READ one 200
+    // API RESPONSE 포맷 개선 전
+//    @GetMapping("/{id}")
+//    public MemberResponse get(@PathVariable Long id){
+//        Member m = memberService.findOne(id);
+//        return new MemberResponse(m.getId(), m.getName());
+//    }
+
     @GetMapping("/{id}")
-    public MemberResponse get(@PathVariable Long id){
+    public ApiResponse<MemberResponse> get(@PathVariable Long id) {
         Member m = memberService.findOne(id);
-        return new MemberResponse(m.getId(), m.getName());
+        return ApiResponse.success(new MemberResponse(m.getId(), m.getName()));
     }
 
     // UPDATE 200 (또는 204)
