@@ -1,5 +1,6 @@
 package com.example.solwith.config;
 
+import com.example.solwith.common.RequestLoggingFilter;
 import com.example.solwith.common.TraceIdFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -14,6 +15,13 @@ public class WebConfig {
         FilterRegistrationBean<TraceIdFilter> reg = new FilterRegistrationBean<>();
         reg.setFilter(new TraceIdFilter());
         reg.setOrder(1);
+        return reg;
+    }
+
+    @Bean
+    public FilterRegistrationBean<RequestLoggingFilter> requestLoggingFilter() {
+        FilterRegistrationBean<RequestLoggingFilter> reg = new FilterRegistrationBean<>();
+        reg.setFilter(new RequestLoggingFilter());
         return reg;
     }
 }
