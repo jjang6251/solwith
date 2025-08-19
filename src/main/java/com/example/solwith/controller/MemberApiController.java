@@ -1,11 +1,17 @@
 package com.example.solwith.controller;
 
+
 import com.example.solwith.common.ApiResponse;
+import com.example.solwith.docs.schema.ApiResponseMemberResponse;
 import com.example.solwith.domain.Member;
 import com.example.solwith.dto.MemberCreateRequest;
 import com.example.solwith.dto.MemberResponse;
 import com.example.solwith.dto.MemberUpdateRequest;
 import com.example.solwith.service.MemberService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -80,8 +86,17 @@ public class MemberApiController {
 //    }
 
     // API RESPONSE 포맷 개선 후 2
+    @Operation(summary = "회원 단건 조회", description = "ID로 회원을 조회합니다.")
+    @ApiResponses(value = {
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "성공",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponseMemberResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "존재하지 않음",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponseMemberResponse.class)))
+    })
     @GetMapping("/{id}")
-    public ApiResponse<MemberResponse> get(@PathVariable Long id, HttpServletRequest req) {
+    public ApiResponse<MemberResponse> get(@PathVariable("id") Long id, HttpServletRequest req) {
         Member m = memberService.findOne(id);
         return ApiResponse.success(new MemberResponse(m.getId(), m.getName()), req.getRequestURI(), traceId(req));
     }

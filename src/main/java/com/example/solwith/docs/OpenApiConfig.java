@@ -33,18 +33,7 @@ public class OpenApiConfig {
                 .info(new Info()
                         .title("Spring CRUD API")
                         .version("v1")
-                        .description("공통 응답 포맷 + TraceId + 간단 API Key 인증이 적용된 예"))
-                // 이 문서의 모든 엔드포인트가 "ApiKeyAuth" 스키마를 사용한다고 선언(전역)
-                .addSecurityItem(new SecurityRequirement().addList("ApiKeyAuth"))
-                // 보안 스키마 정의: Header에 'X-API-KEY'를 담는 API KEY 타입
-                .components(new Components().addSecuritySchemes(
-                        "ApiKeyAuth",
-                        new SecurityScheme()
-                                .type(SecurityScheme.Type.APIKEY)       // APIKEY / HTTP / OAUTH2 / OPENIDCONNECT 등
-                                .in(SecurityScheme.In.HEADER)           // 헤더에 전달
-                                .name("X-API-KEY")                      // 헤더 키 이름
-                                .description("변경성 요청(POST/PUT/DELETE) 시 필수") // 설명(표시용)
-                ));
+                        .description("공통 응답 포맷 + TraceId + 간단 API Key 인증이 적용된 예"));
     }
 
     /**
@@ -54,11 +43,11 @@ public class OpenApiConfig {
      *
      * 필요 시 여러 그룹 빈을 추가해 도메인/버전별로 분리 가능합니다.
      */
-    @Bean
-    public GroupedOpenApi memberApi() {
-        return GroupedOpenApi.builder()
-                .group("members")
-                .pathsToMatch("/api/members/**")
-                .build();
-    }
+//    @Bean
+//    public GroupedOpenApi memberApi() {
+//        return GroupedOpenApi.builder()
+//                .group("members")
+//                .pathsToMatch("/api/members/**")
+//                .build();
+//    }
 }
