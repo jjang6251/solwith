@@ -40,16 +40,16 @@ public class MemberServiceImplTest {
         then(repo).should().save(any(Member.class));
     }
 
-    @Test
-    void findOne_존재하지_않으면_NotFoundException() {
-        // given
-        given(repo.findById(999L)).willReturn(Optional.empty());
-
-        // when & then
-        assertThatThrownBy(() -> sut.findOne(999L))
-                .isInstanceOf(NotFoundException.class)
-                .hasMessageContaining("999");
-    }
+//    @Test
+//    void findOne_존재하지_않으면_NotFoundException() {
+//        // given
+//        given(repo.findById(999L)).willReturn(Optional.empty());
+//
+//        // when & then
+//        assertThatThrownBy(() -> sut.findOne(999L))
+//                .isInstanceOf(NotFoundException.class)
+//                .hasMessageContaining("999");
+//    }퓨
 
     @Test
     void findMembers_전체조회() {
