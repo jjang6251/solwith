@@ -19,7 +19,7 @@ public class ApiResponse<T> {
     private final T data; // 성공 데이터
     @Schema(description = "에러 상세 목록", nullable = true)
     private final List<ErrorDetail> errors; //에러 상세(성공시 null 반환)
-    @Schema(description = "요청 경로", example = "/api/members/1")
+    @Schema(description = "요청경로", example = "/api/members/1")
     private final String path;             // 요청 URI
     @Schema(description = "추적 ID", example = "b6f4c4ae-7f...")
     private final String traceId;          // 요청 추적 ID (로그 상관관계)
