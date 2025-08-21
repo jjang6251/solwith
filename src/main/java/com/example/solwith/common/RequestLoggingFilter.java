@@ -41,7 +41,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             int reqSize = requestWrapper.getContentAsByteArray().length;
             int resSize = responseWrapper.getContentAsByteArray().length;
 
-            String level = took >= SLOW_MS ? "SLOW" : "OK";
+            String level = took >= SLOW_MS ? "[Time]SLOW" : "[Time]OK";
 
             log.info("[{}] {} {}{} -> {} ({} ms) traceId={} reqB={}B resB={}B ua={}",
                     level, method, uri, query, status, took, traceId, reqSize, resSize, ua);
