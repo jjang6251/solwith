@@ -32,15 +32,20 @@ public class TraceIdFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
         String traceId = request.getHeader(HEADER);
         if (traceId == null || traceId.isBlank()) traceId = UUID.randomUUID().toString();
+        //들어온 헤더가 있으면 재사용, 없으면 생성 → 외부 시스템과 연동 시 체인 전체가 같은 traceId 사용
 
-        MDC.put(TRACE_ID, traceId);
+        request.setAttribute(TRACE_ID, traceId);
+        response.setHeader(HEADER, traceId); //응답 헤더에도 노출
+        MDC.put(TRACE_ID, traceId); //로그 MDC에 세팅
+
+        //MDC(Mapped Diagnostic Context)란 현재 스레드에 붙는 키/값 저장소.
 
         try {
             response.setHeader(HEADER, traceId);
             request.setAttribute(TRACE_ID, traceId);
             filterChain.doFilter(request, response);
         } finally {
-            MDC.remove(TRACE_ID);
+            MDC.remove(TRACE_ID); //반드시 정리해야하는 부분 (스레드 재사용 오염 방지)
         }
     }
 }
