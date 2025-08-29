@@ -174,5 +174,170 @@ return ResponseEntity
 ---
 </details>
 
+<details>
+<summary>JWT_Auth_Flow</summary>
+
+# JWT 인증 흐름 정리 (JwtAuthFilter · JwtProvider · SecurityConfig)
+
+---
+
+## 1) 요약
+
+- **JwtProvider**: JWT **발급/검증** 유틸. 시크릿 키로 서명/검증, 클레임 추출.
+- **JwtAuthFilter**: HTTP 요청에서 `Authorization: Bearer <JWT>` **파싱 → 검증 → SecurityContext 주입**.
+- **SecurityConfig**: 시큐리티 **정책(인가 규칙, 세션/CSRF, 필터 순서)**을 정의.
+
+---
+
+## 2) 요청 1건의 처리 순서 (큰 그림)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant F1 as TraceIdFilter
+    participant F2 as JwtAuthFilter
+    participant SC as Spring Security (Authorization)
+    participant MVC as Controller
+
+    C->>F1: HTTP Request
+    F1-->>C: (set X-Trace-Id in header, MDC)
+    F1->>F2: continue filter chain
+
+    alt Authorization header with Bearer token
+        F2->>F2: parse & verify with JwtProvider
+        F2->>SC: set Authentication in SecurityContext
+    else no / invalid token
+        F2->>C: 401 (policy ①) OR throw exception (policy ②)
+        Note over F2,C: 실패 정책에 따라 응답 혹은 전역 예외 처리로 위임
+    end
+
+    F2->>SC: continue
+    SC->>SC: URL/메서드 권한 평가 (permitAll/authenticated/hasRole...)
+    SC->>MVC: pass if authorized
+    MVC-->>C: Response (includes X-Trace-Id, unified body)
+```
+
+> 권장 실패 정책: **필터에서 예외를 던져 전역 예외 처리기**가 공통 응답 포맷으로 변환하도록 구성(일관성 확보).
+
+---
+
+## 3) 구성요소별 역할 & 책임
+
+### 3.1 JwtProvider — JWT 발급/검증 유틸리티
+
+| 기능 | 설명 | 비고 |
+|---|---|---|
+| **createToken(subject, role, claims)** | `sub`, `role`, `iat`, `exp` 세팅 후 **서명**하여 문자열 토큰 발급 | JJWT 사용 (HMAC-SHA) |
+| **parse(token)** | 시크릿 키로 **서명 검증**, 만료/위조/형식 오류 시 예외 | `Jws<Claims>` 반환 |
+| **키 관리** | `application.yml/properties`의 `jwt.secret.key`로 Key 생성 | **최소 32바이트** 이상 권장 |
+| **만료 설정** | `jwt.access-token-validity-seconds`로 토큰 만료 제어 | 운영 환경에서 짧게(예: 1h) |
+
+**샘플 설정 (properties)**
+```properties
+jwt.secret.key=ThisIsADevOnlySecretKeyThatIsAtLeast32BytesLong!!!
+jwt.access-token-validity-seconds=3600
+```
+
+---
+
+### 3.2 JwtAuthFilter — 요청당 한 번 실행되는 인증 필터
+
+| 단계 | 동작 | 결과 |
+|---|---|---|
+| 1 | `Authorization` 헤더 확인 (`Bearer <JWT>`) | 토큰 유무 판단 |
+| 2 | `JwtProvider.parse()`로 검증 | 서명/만료/형식 검사 |
+| 3 | 성공 시 `UsernamePasswordAuthenticationToken` 생성 | `SecurityContextHolder`에 **인증 객체 저장** |
+| 4 | 실패 정책 | ① **즉시 401 응답** 또는 ② **예외 throw → 전역 핸들러 처리** |
+| 5 | (선택) `MDC.put("user", username)` | 로그에 사용자 식별자 자동 포함 |
+
+> 필터는 반드시 **`UsernamePasswordAuthenticationFilter` 앞**에 등록하여, 인가 단계 전에 인증을 완료하도록 한다.
+
+---
+
+### 3.3 SecurityConfig — 시큐리티 전반 정책
+
+| 설정 | 내용 | 목적 |
+|---|---|---|
+| **Session = STATELESS** | 세션 비활성(Stateless) | JWT 형태에 적합 |
+| **CSRF 비활성** | `csrf().disable()` | REST API 기본 |
+| **인가 규칙** | `authorizeHttpRequests`로 **경로별 접근 정책** | 공개/보호 API 구분 |
+| **필터 순서** | `addFilterBefore(new JwtAuthFilter, UsernamePasswordAuthenticationFilter.class)` | 표준 인증 전 JWT 인증 수행 |
+| **CORS/예외 엔트리포인트** | 필요 시 추가 | 클라이언트/보안 정책 정교화 |
+
+---
+
+## 4) 케이스별 동작 요약
+
+- **공개 API** (`permitAll`)
+  - 토큰 없음: 그대로 통과 → 컨트롤러 실행
+  - 토큰 있음: 검증 성공 시 인증된 사용자로 접근(컨트롤러에서 `Authentication` 활용 가능)
+
+- **보호 API** (`authenticated`/`hasRole`)
+  - 토큰 없음/무효: 인가 단계에서 401/403
+  - 유효 토큰: 인증 객체 세팅 → 인가 통과 → 컨트롤러 실행
+
+---
+
+## 5) 운영 팁 & 체크리스트
+
+- [ ] `jwt.secret.key`는 **32바이트 이상**(HMAC-SHA256) — 짧으면 `WeakKeyException` 유발
+- [ ] 실패 정책을 **전역 예외 처리기**로 통일 → `ApiResponse` 포맷 유지
+- [ ] `TraceIdFilter`를 **가장 먼저** 실행해 로그/응답에 traceId 포함
+- [ ] 로깅에 **MDC(traceId, user)**를 써서 장애 추적 용이성 확보
+- [ ] 보호/공개 경로의 **패턴 매칭**이 겹치지 않는지 확인
+- [ ] 토큰/민감정보는 **로그 마스킹** 적용
+
+---
+
+## 6) 미니 예시 (요약 형태)
+
+```java
+// SecurityConfig (요약)
+http.csrf(csrf -> csrf.disable())
+    .sessionManagement(sm -> sm.sessionCreationPolicy(STATELESS))
+    .authorizeHttpRequests(auth -> auth
+        .requestMatchers("/api/auth/login", "/health").permitAll()
+        .requestMatchers("/api/members/**").authenticated()
+        .anyRequest().permitAll())
+    .addFilterBefore(new JwtAuthFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
+```
+
+```java
+// JwtAuthFilter (요약)
+protected void doFilterInternal(req, res, chain) {
+  String header = req.getHeader("Authorization");
+  if (hasBearer(header)) {
+    var jws = jwtProvider.parse(token(header));
+    var auth = new UsernamePasswordAuthenticationToken(jws.getPayload().getSubject(), null,
+        List.of(new SimpleGrantedAuthority("ROLE_" + jws.getPayload().get("role", String.class))));
+    SecurityContextHolder.getContext().setAuthentication(auth);
+  }
+  chain.doFilter(req, res);
+}
+```
+
+```java
+// JwtProvider (요약)
+public String createToken(String username, String role) {
+  Instant now = Instant.now();
+  return Jwts.builder()
+    .subject(username)
+    .claim("role", role)
+    .issuedAt(Date.from(now))
+    .expiration(Date.from(now.plusSeconds(validity)))
+    .signWith(key)
+    .compact();
+}
+```
+
+---
+
+### 참고
+- 토큰 실패를 **필터에서 직접 401로 쓰지 않고**, 커스텀 예외를 던져 전역 예외 처리기에서 공통 포맷으로 내려주는 방식이 더 낫다.
+- 분산 추적을 계획한다면, `X-Trace-Id`와 **표준 trace 헤더**(W3C traceparent)를 병행 가능하다.
+
+</details>
+
 
 
