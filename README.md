@@ -751,6 +751,7 @@ SecurityContextHolder.getContext().setAuthentication(auth);
 - **소유권 검사**로 세밀한 접근 제어를 완성하면 탄탄한 보안 구조가 완성된다.
 </details>
 
+## DB_Lock
 <details>
 <summary>DB-Lock 개념</summary>
 
@@ -1027,6 +1028,123 @@ public void purchaseOptimistic(Long productId, int qty) {
 - 락은 **정확성**과 **성능** 사이의 트레이드오프다.
 - **경합/업무 중요도/DB 특성**을 기준으로 **비관/낙관**을 골라 적용하고,
 - 인덱스/격리/타임아웃/재시도/모니터링을 함께 설계하면 **안전하고 빠른 시스템**을 만들 수 있다.
+
+</details>
+<details>
+<summary>Optimistic Lock</summary>
+
+# MySQL에서 낙관적 락(Optimistic Lock) 정리
+
+> Spring Boot 3 · Hibernate 6 · MySQL 8
+
+---
+
+## 1. 낙관적 락이란?
+
+- 실제 DB에 락을 거는 대신, **버전 컬럼(@Version)** 으로 동시성 충돌을 감지
+- UPDATE 시 `where id=? and version=?` 조건을 포함 → 영향 행이 없으면 **충돌 예외 발생**
+- **장점**: 락 대기 없음 → 성능 유리
+- **단점**: 충돌 시 예외 발생 → 재시도 필요
+
+---
+
+## 2. 엔티티 설계
+
+```java
+@Entity
+public class Product {
+    @Id @GeneratedValue
+    private Long id;
+
+    private int stock;
+
+    @Version   // ✅ 낙관적 락 버전 필드
+    private Long version;
+
+    public void decrease(int qty) {
+        if (stock < qty) throw new IllegalStateException("재고 부족");
+        this.stock -= qty;
+    }
+}
+```
+
+**왜 필요한가?**
+- `@Version`이 없다면 JPA는 단순히 `update ... where id=?`만 실행
+- 동시에 두 트랜잭션이 같은 데이터를 수정해도 **둘 다 성공 → Lost Update 발생**
+- `@Version`은 충돌을 감지하고 예외를 던져줌
+
+---
+
+## 3. 서비스 설계
+
+### 단발 시도
+```java
+@Transactional
+public void decreaseOnce(Long id, int qty) {
+    Product p = repo.findById(id).orElseThrow();
+    p.decrease(qty); // flush 시점에 버전 체크
+}
+```
+
+- **설명**: 단 한 번만 시도 → 충돌 시 `ObjectOptimisticLockingFailureException` 발생
+
+### 재시도 로직
+```java
+public void decreaseWithRetry(Long id, int qty) {
+    for (int attempt = 1; attempt <= 5; attempt++) {
+        try {
+            command.decreaseOnce(id, qty); // REQUIRES_NEW 트랜잭션
+            return; // 성공하면 종료
+        } catch (ObjectOptimisticLockingFailureException e) {
+            if (attempt == 5) throw e;
+            Thread.sleep(50 * attempt); // 백오프 후 재시도
+        }
+    }
+}
+```
+
+- **설명**: 충돌이 나면 일정 횟수만큼 재시도 → 결국 두 스레드 모두 성공할 수 있음
+- **포인트**: 각 시도는 `REQUIRES_NEW` 트랜잭션으로 실행해야 커밋 시점에 충돌이 잡힘
+
+---
+
+## 4. 테스트 시나리오
+
+1) **단발 시도**
+- 두 스레드가 동시에 `decreaseOnce(5)` 실행
+- 한쪽은 성공, 다른 한쪽은 충돌 예외
+- 최종 재고 = 5
+
+2) **재시도**
+- 두 스레드가 동시에 `decreaseWithRetry(5)` 실행
+- 처음엔 충돌 나더라도 재시도 끝에 둘 다 성공
+- 최종 재고 = 0
+
+---
+
+## 5. 실패 원인 & 해결책
+
+- **문제**: 처음 구현에서 `decreaseWithRetry()` 내부에서 같은 빈의 `@Transactional(REQUIRES_NEW)` 메서드를 직접 호출 → 프록시를 거치지 않아 트랜잭션이 열리지 않음
+- **증상**: 예외를 잡지 못하고 최종 재고가 그대로 10으로 남음
+- **해결**: 별도 빈(`ProductCommand`)으로 분리 → 다른 빈을 통해 호출하면 프록시가 적용되어 `REQUIRES_NEW` 정상 동작
+
+---
+
+## 6. 요약 & 팁
+
+- `@Version` 필드 → 낙관적 락 충돌 감지
+- 충돌 시 예외 → 반드시 재시도 정책 필요
+- 재시도는 **트랜잭션 바깥**에서, 시도는 **REQUIRES_NEW**로 실행
+- 동시성 테스트는 **CountDownLatch** 등으로 실제 경합 상황을 만들어야 함
+- 실무에서는 **재시도 + 백오프 + 모니터링(충돌 빈도)**까지 설계
+
+---
+
+### 결론
+
+낙관적 락은 성능은 좋지만 설계 실수가 많다.  
+특히 **트랜잭션 경계**와 **프록시 호출**을 정확히 이해해야 올바르게 동작한다.  
+이번 구조(별도 빈 + REQUIRES_NEW + 재시도)는 실무에서 그대로 활용 가능한 안정적인 패턴이다.
 
 </details>
 
