@@ -446,4 +446,309 @@ public Member findOne(Long id) {
 - traceId + 실행 시간 + 입력값/반환값을 로그에 남겨 **장애 분석과 성능 최적화**에 큰 도움이 된다.
 </details>
 
+<details>
+<summary>메서드 보안<@PreAuthorize> + 역할 계층<Role Hierarchy></summary>
+
+# 메서드 보안(@PreAuthorize) & 역할 계층(Role Hierarchy) 완전 정복
+
+> Spring Boot 3 / Spring Security 6 기준.  
+> **메서드 보안 활성화 → 역할 계층 적용 → JWT 권한 주입 → 소유권(Ownership) 검사 → HTTP 보안과의 병행 사용**
+
+---
+
+## 1) 핵심 개념
+
+- **@PreAuthorize**: 메서드 호출 **직전**에 SpEL로 접근 조건 평가. (권한/로그인 여부/파라미터 기반)
+- **Role Hierarchy**: `ROLE_ADMIN > ROLE_MANAGER > ROLE_USER`처럼 **상위 역할이 하위 역할을 포함**하도록 하는 기능.
+- **HTTP 보안 vs 메서드 보안**:
+  - **HTTP 보안**은 URL 경로 레벨의 1차 장벽(대략적인 공개/보호 구분).
+  - **메서드 보안**은 서비스/컨트롤러 메서드 레벨의 2차 장벽(정밀 권한/소유권 검사).
+  - 둘은 **독립적으로** 작동하며, **둘 다 통과**해야 최종 실행됩니다.
+
+---
+
+## 2) 기본 설정
+
+### 2.1 메서드 보안 활성화
+```java
+// src/main/java/com/example/solwith/auth/SecurityConfig.java
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity(prePostEnabled = true) // ✅ @PreAuthorize/@PostAuthorize 활성화
+public class SecurityConfig {
+    // 기존 http 설정 + JwtAuthFilter 등록
+}
+```
+
+### 2.2 역할 계층 등록 (신규 방식: fromHierarchy)
+```java
+// src/main/java/com/example/solwith/auth/MethodSecurityConfig.java
+@Configuration
+public class MethodSecurityConfig {
+
+    // ADMIN > MANAGER > USER (위 역할이 아래 역할을 “상속”)
+    @Bean
+    static org.springframework.security.access.hierarchicalroles.RoleHierarchy roleHierarchy() {
+        return org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl.fromHierarchy(
+            """
+            ROLE_ADMIN > ROLE_MANAGER
+            ROLE_MANAGER > ROLE_USER
+            """
+        );
+    }
+
+    // @PreAuthorize 해석기에 역할 계층을 적용
+    @Bean
+    static org.springframework.security.access.expression.method.MethodSecurityExpressionHandler
+    methodSecurityExpressionHandler(org.springframework.security.access.hierarchicalroles.RoleHierarchy roleHierarchy) {
+        var handler = new org.springframework.security.access.expression.method.DefaultMethodSecurityExpressionHandler();
+        handler.setRoleHierarchy(roleHierarchy);
+        return handler;
+    }
+}
+```
+
+> **주의:** Spring Security 6부터 `new RoleHierarchyImpl()` 기본 생성자 대신 `fromHierarchy(...)` 사용 권장.  
+> 모든 권한 문자열은 관례상 **`ROLE_` 접두사**를 사용한다.
+
+---
+
+## 3) JWT ↔ 권한(Authorities) 매핑 패턴
+
+JWT에 담긴 클레임을 `GrantedAuthority`로 변환해 `SecurityContext`에 주입해야 @PreAuthorize가 동작한다.  
+(우리 예제는 `JwtAuthFilter`에서 수행)
+
+### 3.1 단일 역할(String) 사용
+**JWT Claims**
+```json
+{
+  "sub": "alice",
+  "role": "ADMIN"
+}
+```
+**필터 변환**
+```java
+String role = claims.get("role", String.class); // "ADMIN"
+List<GrantedAuthority> auths = List.of(new SimpleGrantedAuthority("ROLE_" + role));
+
+var auth = new UsernamePasswordAuthenticationToken(username, null, auths);
+SecurityContextHolder.getContext().setAuthentication(auth);
+```
+
+### 3.2 다중 역할(List<String>) 사용
+**JWT Claims**
+```json
+{
+  "sub": "bob",
+  "roles": ["USER","MANAGER"]
+}
+```
+**필터 변환**
+```java
+List<String> roles = claims.get("roles", List.class); // ["USER","MANAGER"]
+List<GrantedAuthority> auths = roles.stream()
+    .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
+    .toList();
+SecurityContextHolder.getContext().setAuthentication(
+    new UsernamePasswordAuthenticationToken(username, null, auths));
+```
+
+### 3.3 이미 `ROLE_` 접두사가 붙은 경우
+**JWT Claims**
+```json
+{ "sub": "carol", "roles": ["ROLE_USER","ROLE_MANAGER"] }
+```
+**필터 변환**
+```java
+List<String> roles = claims.get("roles", List.class);
+List<GrantedAuthority> auths = roles.stream()
+    .map(SimpleGrantedAuthority::new) // 이미 ROLE_ 접두사 포함
+    .toList();
+```
+
+### 3.4 (선택) 계층 확장 적용 – HTTP 단계까지 확실히 반영
+```java
+// 필터에서 상위 → 하위 권한 확장
+List<GrantedAuthority> base = auths;
+Collection<? extends GrantedAuthority> expanded =
+        roleHierarchy.getReachableGrantedAuthorities(base);
+
+var auth = new UsernamePasswordAuthenticationToken(username, null, expanded);
+SecurityContextHolder.getContext().setAuthentication(auth);
+```
+
+> 이렇게 하면, 예컨대 `ROLE_ADMIN` 토큰이 자동으로 `ROLE_MANAGER`, `ROLE_USER` 권한도 포함하게 된다.
+
+---
+
+## 4) @PreAuthorize 실전 패턴 모음
+
+### 4.1 단순 역할 검사
+```java
+@PreAuthorize("hasRole('ADMIN')")
+public void deleteMember(Long id) { ... }
+
+@PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+public List<Member> listAll() { ... }
+
+@PreAuthorize("isAuthenticated()")
+public Member myProfile() { ... }
+```
+
+### 4.2 소유권(Ownership) 검사 — 다양한 경우의 수
+
+#### (A) JWT `sub`에 **username**이 들어있는 경우
+- `JwtAuthFilter`에서 principal을 **username**으로 설정했다면:  
+  `authentication.name` == username
+
+```java
+@PreAuthorize("#username == authentication.name")
+public Member getByUsername(String username) { ... }
+```
+
+#### (B) JWT `sub`에 **userId(Long)** 가 들어있는 경우
+- principal이 문자열(username)이라면 비교 형 변환 필요
+```java
+@PreAuthorize("#userId.toString() == authentication.name") 
+public Order getMyOrder(Long userId, Long orderId) { ... }
+```
+- 또는 principal 자체를 userId로 저장하는 방식도 가능
+```java
+// 필터에서 principal을 userId(Long)로 저장했다면:
+@PreAuthorize("#userId == principal") 
+public Order getMyOrder(Long userId, Long orderId) { ... }
+```
+
+#### (C) 커스텀 Principal 객체 사용 (권장)
+- 필터에서 `new UsernamePasswordAuthenticationToken(customPrincipal, null, auths)`로 주입
+- 커스텀 객체에 `id`, `username`, `roles` 등 보유
+```java
+@PreAuthorize("#memberId == principal.id") 
+public Member getMyMember(Long memberId) { ... }
+```
+
+#### (D) 도메인 레벨 체크(레포지토리 질의) — @bean 메서드 호출
+- SpEL에서 **빈 메서드**를 호출하여 DB로 소유권 판단
+```java
+@PreAuthorize("@memberSecurity.isOwner(#memberId, authentication.name)")
+public Member getMember(Long memberId) { ... }
+
+@Component
+public class MemberSecurity {
+  private final MemberRepository repo;
+  public boolean isOwner(Long memberId, String username) {
+    return repo.existsByIdAndUsername(memberId, username);
+  }
+}
+```
+
+### 4.3 반환값 기반 검사 — @PostAuthorize
+- 메서드가 반환한 객체의 소유자만 접근 허용
+```java
+@PostAuthorize("returnObject.ownerUsername == authentication.name")
+public Document getDoc(Long id) { ... }
+```
+
+> **TIP:** 소유권 검사는 **서비스 계층**에도 중복으로 거는 게 안전합니다(컨트롤러 우회 호출 방지).
+
+---
+
+## 5) HTTP 보안 규칙(선택) + 메서드 보안 함께 쓰기
+
+### 5.1 추천 구성
+```java
+http
+  .csrf(csrf -> csrf.disable())
+  .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+  .authorizeHttpRequests(auth -> auth
+      .requestMatchers("/api/auth/login", "/health").permitAll() // 공개
+      .anyRequest().authenticated() // 그 외엔 인증 필요(1차 장벽)
+  )
+  .addFilterBefore(new JwtAuthFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
+```
+- URL 레벨에서는 **대략적인 공개/보호**만 나눈다.
+- **정밀 권한/소유권**은 `@PreAuthorize`로 제어(2차 장벽).
+
+### 5.2 FAQ
+- `permitAll()`이어도 메서드에 `@PreAuthorize`가 있으면? → **차단**된다(메서드 보안이 별도로 적용).
+- 반대로 URL에서 `authenticated()`인데 메서드에 조건이 없다면? → **인증만 있으면 통과**한다.
+- **둘 다 통과해야** 실제 실행.
+
+---
+
+## 6) 테스트 시나리오 (빠른 검증)
+
+1. 토큰 없음 → `@PreAuthorize("isAuthenticated()")` 메서드 호출 시 **401 또는 403**
+2. `ROLE_USER` 토큰 → `hasRole('USER')` 메서드 **200**
+3. `ROLE_MANAGER` 토큰 → `hasRole('USER')` 메서드 **200** (계층 상속)
+4. `ROLE_USER` 토큰 → `hasRole('ADMIN')` 메서드 **403**
+5. 소유권 검사: 본인은 **200**, 타인은 **403**
+6. `@PostAuthorize` 반환값 검사: 소유자 외에는 **403**
+
+---
+
+## 7) 흔한 오류 & 체크리스트
+
+- [ ] `@EnableMethodSecurity(prePostEnabled = true)`를 켰는가?
+- [ ] 권한 문자열에 **`ROLE_` 접두사**를 사용했는가?
+- [ ] `RoleHierarchyImpl.fromHierarchy(...)`로 **계층을 등록**했는가?
+- [ ] `DefaultMethodSecurityExpressionHandler#setRoleHierarchy(...)`로 **메서드 보안에 계층 적용**했는가?
+- [ ] JWT 필터에서 **권한을 올바로 주입**했는가? (단일/다중/ROLE_ 여부)
+- [ ] 커스텀 Principal 또는 SpEL bean 호출로 **소유권 판단**이 정확한가?
+- [ ] URL 규칙과 메서드 보안이 **중복/충돌 없이** 조합되는가?
+
+---
+
+## 8) 미니 예시 모음
+
+**서비스 예시**
+```java
+@Service
+public class MemberService {
+
+  @PreAuthorize("hasRole('ADMIN')")
+  public void deleteMember(Long id) { ... }
+
+  @PreAuthorize("isAuthenticated()")
+  public Member myProfile() { ... }
+
+  // 소유권: JWT sub가 username인 경우
+  @PreAuthorize("#username == authentication.name")
+  public Member getByUsername(String username) { ... }
+
+  // 소유권: 커스텀 Principal 객체 사용
+  @PreAuthorize("#memberId == principal.id")
+  public Member getMyMember(Long memberId) { ... }
+
+  // 도메인 체크: 레포지토리 질의
+  @PreAuthorize("@memberSecurity.isOwner(#memberId, authentication.name)")
+  public Member secureGet(Long memberId) { ... }
+}
+```
+
+**JwtAuthFilter 요약**
+```java
+var claims = jwtProvider.parse(token).getPayload();
+String username = claims.getSubject(); // sub
+List<String> roles = claims.get("roles", List.class); // 또는 "role" 단일
+
+List<GrantedAuthority> auths = (roles != null ? roles : List.of())
+    .stream().map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
+    .map(SimpleGrantedAuthority::new).toList();
+
+// (선택) 계층 확장
+var expanded = roleHierarchy.getReachableGrantedAuthorities(auths);
+
+var auth = new UsernamePasswordAuthenticationToken(username, null, expanded);
+SecurityContextHolder.getContext().setAuthentication(auth);
+```
+
+---
+
+### 결론
+- **URL 보안(1차)** + **메서드 보안(2차)** 조합으로 다층 방어를 구축하면 좋다.
+- **역할 계층**을 통해 권한 관리를 단순화하고,
+- **소유권 검사**로 세밀한 접근 제어를 완성하면 탄탄한 보안 구조가 완성된다.
+</details>
+
 
