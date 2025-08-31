@@ -3,6 +3,7 @@ package com.example.solwith.service;
 import com.example.solwith.aop.LogExecutionTime;
 import com.example.solwith.domain.Member;
 import com.example.solwith.repository.MemberRepository;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -29,12 +30,14 @@ public class MemberServiceImpl implements MemberService{
         return memberRepository.findAll();
     }
 
+    @PreAuthorize("hasAnyRole('MANGER', 'ADMIN')") // MANAGER 이상
     @LogExecutionTime
     @Override
     public Member findOne(Long id) {
         return memberRepository.findById(id).orElse(null);
     }
 
+    @PreAuthorize("isAuthenticated()") // 로그인 사용자면 OK
     @Override
     public Member update(Long id, String name) {
         Member m = findOne(id);
@@ -42,6 +45,7 @@ public class MemberServiceImpl implements MemberService{
         return m;
     }
 
+    @PreAuthorize("hasRole('ADMIN')") //ADMIN만 접근 가능
     @Override
     public void delete(Long id) {
         Member m = findOne(id);
