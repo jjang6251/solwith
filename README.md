@@ -1365,7 +1365,7 @@ public record AppProps(String name, int poolSize) {}
 
 ---
 
-## 부록) 자주 하는 실수 & 체크리스트
+## 자주 하는 실수 & 체크리스트
 
 - [ ] `@Transactional` **자기호출**로 미적용 → **다른 빈 분리** 또는 `TransactionTemplate` 사용
 - [ ] `@Valid/@Validated` 누락 → 검증이 동작하지 않음(컨트롤러 메서드 파라미터에 적용)
