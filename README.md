@@ -751,4 +751,283 @@ SecurityContextHolder.getContext().setAuthentication(auth);
 - **소유권 검사**로 세밀한 접근 제어를 완성하면 탄탄한 보안 구조가 완성된다.
 </details>
 
+<details>
+<summary>DB-Lock 개념</summary>
+
+# 데이터베이스 락(Database Locks) 완전 정리
+
+> Spring Boot 3 / JPA(Jakarta) / Hibernate 6 기준
+
+---
+
+## 1) 왜 락이 필요한가? — 동시성 이상(Anomalies)
+
+동시에 여러 트랜잭션이 같은 데이터를 읽고/쓰기 하면 아래 문제가 발생할 수 있다.
+
+- **Dirty Read**: 커밋되지 않은 값을 다른 트랜잭션이 읽음
+- **Non‑repeatable Read**: 같은 트랜잭션 내에서 같은 행을 두 번 읽을 때 값이 달라짐
+- **Phantom Read**: 같은 조건으로 읽을 때 행의 개수가 달라짐(새로운 행이 나타남/사라짐)
+- **Lost Update**: 서로 덮어써서 한쪽 업데이트가 사라짐 → 실무에서 가장 피해가 큼
+
+> 해결책은 **적절한 격리수준(Isolation Level)** + **락** + **낙관/비관 전략**의 조합이다.
+
+---
+
+## 2) 격리수준(Isolation)과 MVCC의 관계
+
+- **MVCC**(Multi‑Version Concurrency Control): 대부분의 RDB(PostgreSQL, MySQL InnoDB)가 채택.  
+  읽기는 스냅샷을 보고, 쓰기는 버전을 새로 만들어 충돌을 완화.
+- 격리수준(낮→높):
+  1) **READ UNCOMMITTED**
+  2) **READ COMMITTED** (PostgreSQL 기본)
+  3) **REPEATABLE READ** (MySQL InnoDB 기본)
+  4) **SERIALIZABLE** (가장 엄격, 성능 비용 큼)
+
+> 격리수준만으로 모든 충돌을 막기 어렵다. **Lost Update**는 보통 **락** 또는 **낙관적 락**으로 해결한다.
+
+---
+
+## 3) 락의 분류 (학습 지도)
+
+### 3.1 행위 기준
+- **공유 락(Shared, S)**: 다른 트랜잭션도 **읽기**는 가능, **쓰기**는 불가
+- **배타 락(Exclusive, X)**: **읽기/쓰기 모두 차단**, 나만 씀
+- **업데이트 락(Update, U)**: (주로 SQL Server) S→X 전환 충돌 방지용
+- **의도 락(Intent, IS/IX/SIX)**: 상위 객체(테이블)에 “하위에 락 있음”을 표시하는 메타 락
+
+### 3.2 범위 기준
+- **Row(레코드) 락**: 가장 세밀, 실무 기본
+- **Page/Page‑Range 락**: 일부 엔진에서 사용
+- **Table 락**: 테이블 전체
+- **Gap/Next‑Key 락**: MySQL InnoDB가 특정 범위(갭)까지 잠굼(팬텀 방지)
+
+### 3.3 전략 기준
+- **비관적 락(Pessimistic)**: “충돌 날 것”이라 보고 **미리** 잠금 (예: `SELECT ... FOR UPDATE`)
+- **낙관적 락(Optimistic)**: “잘 안 날 것”이라 보고 **커밋 시점**에 버전 충돌 검사 (`@Version`)
+
+### 3.4 특수
+- **Advisory Lock**(PostgreSQL): 애플리케이션 레벨 사용자 정의 락(키 기반)
+
+---
+
+## 4) 비관적 락 (Pessimistic Lock)
+
+### 4.1 SQL 예시
+
+#### MySQL InnoDB
+```sql
+-- 쓰기 의도: 해당 행 X-락 (다른 트랜잭션의 읽기/쓰기 제한)
+SELECT * FROM product WHERE id = 10 FOR UPDATE;
+
+-- 읽기 공유: S-락 (다른 트랜잭션은 쓰기 불가)
+SELECT * FROM product WHERE id = 10 LOCK IN SHARE MODE; -- (MySQL 8.0 이하 구문)
+-- MySQL 8+에서는 FOR SHARE 사용 가능
+SELECT * FROM product WHERE id = 10 FOR SHARE;
+```
+
+#### PostgreSQL
+```sql
+SELECT * FROM product WHERE id = 10 FOR UPDATE;         -- X-락
+SELECT * FROM product WHERE id = 10 FOR NO KEY UPDATE;  -- 키 변경만 막음
+SELECT * FROM product WHERE id = 10 FOR SHARE;          -- 공유 락
+SELECT * FROM product WHERE id = 10 FOR KEY SHARE;      -- FK 참조 키 보호
+```
+
+> **주의(MySQL)**: 인덱스 미활용/범위 조건일 때 **갭/넥스트키 락**으로 더 넓게 잠길 수 있어요. 인덱스 설계를 꼼꼼히!
+
+### 4.2 Spring Data JPA 예시 (Jakarta API)
+
+```java
+public interface ProductRepository extends JpaRepository<Product, Long> {
+
+    // 행 쓰기 락 (업데이트 의도)
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@jakarta.persistence.QueryHint(name = "jakarta.persistence.lock.timeout", value = "3000")) // ms
+    @Query("select p from Product p where p.id = :id")
+    Optional<Product> findByIdForUpdate(@Param("id") Long id);
+
+    // 공유 락
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_READ)
+    @Query("select p from Product p where p.id = :id")
+    Optional<Product> findByIdForShare(@Param("id") Long id);
+}
+```
+
+서비스 트랜잭션:
+```java
+@Service
+public class StockService {
+
+    @Transactional
+    public void decrease(Long productId, int qty) {
+        Product p = repo.findByIdForUpdate(productId)
+                        .orElseThrow(() -> new NotFoundException("product"));
+
+        if (p.getStock() < qty) throw new IllegalStateException("재고 부족");
+        p.setStock(p.getStock() - qty);
+        // flush/commit 시 UPDATE 실행
+    }
+}
+```
+
+**장점**: 충돌 즉시 차단 → Lost Update 방지에 확실  
+**단점**: 대기/교착 가능성, 스루풋 저하
+
+---
+
+## 5) 낙관적 락 (Optimistic Lock)
+
+**아이디어**: 테이블에 `version` 컬럼을 두고, `UPDATE ... WHERE id=? AND version=?`처럼 **버전을 조건에 포함**.  
+영향 행이 0이면 누군가 먼저 바꾼 것 → **충돌 예외**.
+
+### 5.1 JPA 매핑
+```java
+@Entity
+public class Product {
+    @Id @GeneratedValue
+    private Long id;
+
+    private int stock;
+
+    @Version                 // ✅ 버전 필드
+    private Long version;    // Long/Integer/Timestamp 가능
+}
+```
+
+### 5.2 동작
+- 트랜잭션 T1, T2가 같은 행을 읽음(버전=5)
+- T1이 업데이트 시도 → `where id=? and version=5`로 성공, 버전=6으로 증가
+- T2가 업데이트 시도 → `where id=? and version=5`가 **영향 없음** → `OptimisticLockException` 발생
+- 보통 **재시도 로직**(retry with backoff)을 둔다.
+
+### 5.3 언제 쓰나?
+- **경합이 낮은** 읽기 중심 시스템(마이페이지, 설정 변경 등)
+- 과도한 락 대기를 피하고 **스루풋**을 얻고 싶을 때
+
+**주의**: 실패 시 **예외 처리/재시도**가 설계에 반드시 들어가야 함.
+
+---
+
+## 6) Lost Update 방지 전략 비교
+
+| 전략 | 방법 | 장점 | 단점 | 추천 상황 |
+|---|---|---|---|---|
+| 비관적 락 | `FOR UPDATE` / PESSIMISTIC_WRITE | 충돌 즉시 차단, 단순 | 대기/교착, throughput 하락 | 고경합, 금전/재고 같이 **꼭** 지켜야 하는 자원 |
+| 낙관적 락 | `@Version` | 락 대기 없음, 고성능 | 충돌 시 예외 → 재시도 필요 | 경합이 낮은 업데이트, 사용자 설정/게시글 수정 등 |
+
+---
+
+## 7) 교착상태(Deadlock)와 타임아웃
+
+- **Deadlock**: 서로가 서로의 락을 기다리는 상태 (A가 a→b 순서로, B가 b→a 순서로 락 요청 등)
+- **예방법**
+  - **락 획득 순서**를 서비스 전반에서 **일관**되게
+  - 트랜잭션을 **짧게**, 필요한 최소 범위만 잠금
+  - **인덱스** 설계로 스캔 범위를 줄여 **갭/넥스트키** 락 최소화(MySQL)
+  - 타임아웃 설정: `jakarta.persistence.lock.timeout`, DB의 `lock_wait_timeout`/`deadlock_timeout`
+
+- **대응**
+  - DB가 Deadlock을 감지하면 한쪽을 실패시킴 → 어플리케이션에서 **재시도**
+
+---
+
+## 8) DB별 특징 (요약)
+
+### MySQL InnoDB
+- 기본 격리수준 **REPEATABLE READ**
+- **Next‑Key Lock**(레코드 + 갭)으로 팬텀을 방지
+- 인덱스 미사용 시 잠금 범위가 넓어질 수 있음 → **적절한 인덱스** 중요
+
+### PostgreSQL
+- 기본 격리수준 **READ COMMITTED**
+- 강력한 **MVCC**: 읽기는 보통 다른 트랜잭션을 블로킹하지 않음
+- `FOR UPDATE / FOR NO KEY UPDATE / FOR SHARE / FOR KEY SHARE` 세분화
+- **Advisory Lock** 제공: `pg_advisory_lock(key)`
+
+---
+
+## 9) Spring 트랜잭션 옵션과 함께 쓰기
+
+```java
+@Service
+public class OrderService {
+
+    // 격리수준을 조절하고 싶을 때 (DB/업무 특성에 맞춤)
+    @Transactional(isolation = Isolation.REPEATABLE_READ, timeout = 5)
+    public void placeOrder(Long productId) {
+        // 재고 차감은 비관적 락으로
+        Product p = repo.findByIdForUpdate(productId).orElseThrow();
+        // ...
+    }
+}
+```
+
+- `timeout`(초)로 긴 대기/교착 시 빠르게 탈출
+- 격리수준은 DB 기본을 따르되, 핵심 로직에만 필요시 상향
+
+---
+
+## 10) 실무 체크리스트
+
+- [ ] **핵심 자원**(재고, 포인트, 잔액)은 비관적 락 or 낙관적 + 재시도
+- [ ] 동일 자원 잠금 **순서 일관성**
+- [ ] 트랜잭션 **짧게**, 비즈니스/외부 호출 분리
+- [ ] MySQL은 **인덱스 필수**, 범위 조건 잠금 범위 유의
+- [ ] **락/쿼리 타임아웃** 명시로 장애 영향 축소
+- [ ] 낙관적 락은 **재시도 전략** 포함(backoff)
+- [ ] 모니터링: 락 대기/교착 지표, 슬로우 쿼리, 타임아웃 로그
+- [ ] 부하/경합 시나리오로 **부하 테스트** 필수
+
+---
+
+## 11) 상황별 선택 가이드
+
+- **업데이트 경합 낮음**: `@Version`(낙관) + 재시도 → 고성능
+- **경합 높고 반드시 보장**: `FOR UPDATE`(비관) → 안전성 우선
+- **읽기 많은 조회 API**: 락 없이 MVCC로 처리 + 필요 시 캐시
+- **범위 삽입 충돌 방지(MySQL)**: 적절한 인덱스 + 트랜잭션 내 `FOR UPDATE`로 “갭” 보호
+- **복잡한 소유권/검증**: DB 제약(UNIQUE/FK/체크) + 서비스 락 조합
+
+---
+
+## 12) 미니 예제(정리)
+
+### 12.1 비관적 락 기반 재고 차감
+```java
+@Transactional
+public void purchase(Long productId, int qty) {
+    Product p = repo.findByIdForUpdate(productId)
+                    .orElseThrow(() -> new NotFoundException("not found"));
+    if (p.getStock() < qty) throw new IllegalStateException("재고 부족");
+    p.setStock(p.getStock() - qty);
+}
+```
+
+### 12.2 낙관적 락 기반 재고 차감 (+재시도)
+```java
+@Transactional
+public void purchaseOptimistic(Long productId, int qty) {
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        try {
+            Product p = repo.findById(productId).orElseThrow();
+            if (p.getStock() < qty) throw new IllegalStateException("재고 부족");
+            p.setStock(p.getStock() - qty);
+            return; // commit 시 @Version 검사 통과하면 성공
+        } catch (jakarta.persistence.OptimisticLockException e) {
+            if (attempt == 3) throw e;
+            try { Thread.sleep(50L * attempt); } catch (InterruptedException ignored) {}
+        }
+    }
+}
+```
+
+---
+
+### 결론
+- 락은 **정확성**과 **성능** 사이의 트레이드오프다.
+- **경합/업무 중요도/DB 특성**을 기준으로 **비관/낙관**을 골라 적용하고,
+- 인덱스/격리/타임아웃/재시도/모니터링을 함께 설계하면 **안전하고 빠른 시스템**을 만들 수 있다.
+
+</details>
+
 
