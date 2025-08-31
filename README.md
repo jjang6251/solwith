@@ -1148,4 +1148,231 @@ public void decreaseWithRetry(Long id, int qty) {
 
 </details>
 
+## Annotaion 정리
+<details>
+<summary>Annotation</summary>
 
+# Spring Boot 실무 어노테이션 가이드 (핵심 + 용도별 정리)
+
+> Spring Boot 3.x / Spring Framework 6.x 기준
+
+---
+
+## 0) 한눈에 보기 (Cheat Sheet)
+
+| 목적 | 대표 어노테이션 | 핵심 요약 |
+|---|---|---|
+| 앱 부트스트랩 | `@SpringBootApplication` | 컴포넌트 스캔 + 자동설정 + 부트 설정 통합 |
+| 빈 등록/DI | `@Component`, `@Service`, `@Repository`, `@Configuration`, `@Bean`, `@Autowired`, `@Qualifier`, `@Primary`, `@Lazy`, `@Value` | 스테레오타입 + 수동 빈 등록 + 주입/선정/지연 |
+| 구성/프로퍼티 | `@ConfigurationProperties`, `@EnableConfigurationProperties`, `@Profile` | yml/properties → 타입세이프 바인딩, 프로파일 분기 |
+| 웹 MVC/REST | `@RestController`, `@Controller`, `@RequestMapping`(`@GetMapping` 등), `@PathVariable`, `@RequestParam`, `@RequestBody`, `@ResponseStatus`, `@ControllerAdvice`/`@RestControllerAdvice`, `@ExceptionHandler`, `@CrossOrigin` | API 엔드포인트/바인딩/예외 처리/CORS |
+| 검증 | `@Valid`, `@Validated`, (Jakarta) `@NotNull`, `@NotBlank`, `@Size` 등 | 요청 DTO/엔티티 제약조건 검증 |
+| 영속성(JPA) | `@Entity`, `@Id`, `@GeneratedValue`, `@Column`, 관계 매핑(`@OneToMany` 등), `@Version` | 엔티티 매핑/버전(낙관적 락) |
+| Spring Data | `@Repository`, `@EnableJpaRepositories`, `@Query`, `@Modifying`, `@Lock`, `@EntityGraph`, **감사**: `@CreatedDate`, `@LastModifiedDate`, `@EnableJpaAuditing` | 리포지토리/쿼리/락/페치전략/감사 |
+| 트랜잭션 | `@Transactional`, `@EnableTransactionManagement` | 경계/전파/격리/읽기전용/롤백 규칙 |
+| 캐시 | `@EnableCaching`, `@Cacheable`, `@CachePut`, `@CacheEvict`, `@Caching` | 메서드 레벨 캐싱 |
+| AOP | `@Aspect`, `@Around`/`@Before` 등 | 횡단 관심사(로깅/추적/권한 등) |
+| 보안 | `@EnableWebSecurity`, `@EnableMethodSecurity`, `@PreAuthorize`, `@PostAuthorize`, `@RolesAllowed` | URL/메서드 보안 |
+| 스케줄/비동기 | `@EnableScheduling`, `@Scheduled`, `@EnableAsync`, `@Async` | 크론 작업/쓰레드 풀 비동기 |
+| 테스트 | `@SpringBootTest`, `@DataJpaTest`, `@WebMvcTest`, `@MockBean`, `@SpyBean`, `@AutoConfigureMockMvc`, `@ActiveProfiles`, `@Sql`, `@TestConfiguration` | 슬라이스/통합 테스트/목 주입 |
+| 문서화(OpenAPI) | `@Operation`, `@ApiResponse`, `@Schema`, `@Parameter`, `@Tag` (springdoc-openapi) | API 스펙/스웨거 UI 노출 |
+
+---
+
+## 1) 앱 부트스트랩 & 구성
+
+### `@SpringBootApplication`
+- = `@SpringBootConfiguration` + `@EnableAutoConfiguration` + `@ComponentScan`
+- **왜**: 스캔/자동설정/부트 설정을 한 번에. 일반적으로 **최상위 패키지 루트**에 배치하여 하위 패키지 전부 스캔.
+
+### `@Configuration`
+- 자바 기반 설정 클래스. 내부 `@Bean` 메서드 정의.
+- **주의**: `proxyBeanMethods=false`(기본 true)로 변경 시, `@Bean` 간 참조가 단순 메서드 호출이 되어 **싱글톤 보장에 영향** 있을 수 있음.
+
+### `@Bean`
+- 수동 빈 등록.
+- **왜**: 라이브러리 객체, 팩토리 생성 등 자동 스캔 어려운 경우.
+
+### `@Profile("dev")`
+- 특정 프로파일에서만 빈 등록/설정 적용.
+
+---
+
+## 2) 빈 등록 & 의존성 주입
+
+### 스테레오타입
+- `@Component`(일반), `@Service`(서비스 계층 의미 부여), `@Repository`(데이터 예외 변환), `@Controller`/`@RestController`(웹)
+- **왜**: 역할 명확화 + 스캔 대상.
+
+### 주입/선정
+- `@Autowired`(필드/생성자/세터), **권장**: 생성자 주입 + `@RequiredArgsConstructor`(롬복)
+- `@Qualifier("name")` / `@Primary` : 동일 타입 여러 빈일 때 선택
+- `@Lazy` : 순환참조 회피/지연 초기화
+- `@Value("${...}")` : 단건 프로퍼티 주입(복잡 바인딩은 `@ConfigurationProperties` 권장)
+
+---
+
+## 3) 프로퍼티 바인딩 & 환경
+
+### `@ConfigurationProperties(prefix="app")`
+```java
+@ConfigurationProperties(prefix="app")
+public record AppProps(String name, int poolSize) {}
+```
+- **왜**: 타입 세이프, 계층 구조 바인딩, IDE 자동완성.
+- 함께: `@EnableConfigurationProperties(AppProps.class)` 또는 빈으로 등록.
+
+### `@PropertySource`
+- 외부 properties 파일 추가(요즘은 yml 사용이 일반적).
+
+---
+
+## 4) 웹 MVC & REST
+
+### 컨트롤러
+- `@RestController` = `@Controller` + `@ResponseBody`(메시지 컨버터로 JSON 등 직렬화)
+- `@RequestMapping`(클래스/메서드), 축약형: `@GetMapping`/`@PostMapping`/`@PutMapping`/`@DeleteMapping`/`@PatchMapping`
+- 파라미터 바인딩: `@PathVariable`, `@RequestParam`, `@RequestHeader`, `@CookieValue`, `@RequestBody`, `@ModelAttribute`
+- 응답: `@ResponseStatus`, `ResponseEntity<T>`
+
+### 예외 처리
+- `@ControllerAdvice` / `@RestControllerAdvice` + `@ExceptionHandler`
+- **왜**: 예외 공통 처리, 응답 포맷 일관화(에러코드/메시지/traceId 등)
+
+### 기타
+- `@CrossOrigin`(CORS 허용), `@InitBinder`(바인딩 커스텀), `@MatrixVariable`(드묾)
+
+**실무 팁**
+- 요청 DTO에 **검증 어노테이션**을 붙이고 컨트롤러 파라미터에 `@Valid`/`@Validated`를 사용.
+- 공통 응답 포맷 + 전역 예외 처리로 **API 일관성** 유지.
+
+---
+
+## 5) 검증(Validation)
+
+- `@Valid`(JSR 380/381 Jakarta Validation 트리거), `@Validated`(스프링 전용; 그룹, 메서드 보안 등과 조합 쉬움)
+- 제약: `@NotNull`, `@NotBlank`, `@Size`, `@Email`, `@Pattern`, `@Min`/`@Max`, `@Positive`/`@Negative`, `@Past`/`@Future` 등
+- **실무 포인트**
+  - **요청 DTO**에 붙여 컨트롤러 레벨에서 실패 빠르게 반환
+  - 서비스 내부 검증은 **별도 도메인 규칙**으로 처리(Bean Validation은 입구 검증 중심)
+
+---
+
+## 6) 영속성(JPA/Hibernate) & Spring Data
+
+### JPA 매핑
+- 기본: `@Entity`, `@Table`, `@Id`, `@GeneratedValue`, `@Column`, `@Enumerated`, `@Lob`
+- 관계: `@OneToOne`, `@OneToMany`, `@ManyToOne`, `@ManyToMany`, `@JoinColumn`, `@JoinTable`
+- 값 타입: `@Embeddable`, `@Embedded`, `@ElementCollection`
+- 동시성: `@Version`(낙관적 락)
+- **주의**: 컬렉션 지연로딩, N+1, 고아 객체, 연관관계 주인 개념 필수 이해
+
+### Spring Data JPA
+- 리포지토리: `@Repository`(예외 변환), `@EnableJpaRepositories`
+- 쿼리: `@Query`, `@Modifying`(DML), `@Lock(LockModeType.PESSIMISTIC_WRITE)`, `@EntityGraph`(페치전략)
+- 감사: `@CreatedDate`, `@LastModifiedDate`, `@CreatedBy`, `@LastModifiedBy` + `@EnableJpaAuditing`
+
+**실무 팁**
+- 변경 메서드에는 `@Transactional`을 붙이고, 읽기 전용에는 `@Transactional(readOnly = true)`로 힌트 제공.
+- 대량 수정은 `@Modifying(clearAutomatically = true)`로 1차 캐시 동기화 고려.
+
+---
+
+## 7) 트랜잭션
+
+### `@Transactional`
+- 속성: `readOnly`, `propagation`, `isolation`, `timeout`, `rollbackFor` 등
+- **왜**: 원자성/일관성 관리
+- **주의(중요)**:
+  - **자기호출**은 프록시를 거치지 않아 **미적용** (재시도/REQUIRES_NEW는 외부 빈 또는 `TransactionTemplate` 사용)
+  - 기본 롤백은 **런타임 예외**. 체크 예외 커스텀 시 `rollbackFor` 설정
+  - public 메서드 권장(프록시 기반)
+
+### `@EnableTransactionManagement`
+- 컴포넌트 스캔 기반에서 보통 자동 활성화되지만 명시적으로 켜는 경우도 있음.
+
+---
+
+## 8) 캐싱
+
+- `@EnableCaching` : 캐시 기능 활성화
+- 메서드 레벨:
+  - `@Cacheable`(조회 캐시)
+  - `@CachePut`(메서드 실행 결과로 캐시 갱신)
+  - `@CacheEvict`(캐시 제거) / `@Caching`(조합)
+- **실무 팁**: 키 설계, TTL, 예외/미스 전략, 멱등성 고려.
+
+---
+
+## 9) AOP
+
+- `@Aspect` + `@Around`/`@Before`/`@AfterReturning`/`@AfterThrowing`/`@After`
+- **왜**: 로깅, 트레이싱, 성능 측정, 권한 체크 등 횡단 관심사 분리
+- 스프링 부트 3에서는 별도 `@EnableAspectJAutoProxy`가 없어도 보통 잘 동작(스타터 의존성에 따라).
+
+---
+
+## 10) 보안(Spring Security)
+
+- `@EnableWebSecurity` : 시큐리티 필터 체인 구성 시작
+- `@EnableMethodSecurity(prePostEnabled = true)` : `@PreAuthorize`/`@PostAuthorize` 사용
+- 메서드 보안:
+  - `@PreAuthorize("hasRole('ADMIN')")`, `@PostAuthorize("returnObject.owner == authentication.name")`
+  - `@RolesAllowed("ADMIN")`(Jakarta), `@Secured("ROLE_ADMIN")`(구버전 스타일)
+- **실무 팁**: 역할 계층 `RoleHierarchyImpl.fromHierarchy` + ExpressionHandler 연결, `ROLE_` 접두사 규칙 준수.
+
+---
+
+## 11) 스케줄링 & 비동기
+
+- 스케줄: `@EnableScheduling`, `@Scheduled(cron="...")`
+- 비동기: `@EnableAsync`, `@Async`(리턴 `CompletableFuture`/`void` 등)
+- **주의**: 스레드 풀 사이즈/큐 용량/타임아웃 설정, 트랜잭션/보안 컨텍스트 전파 유의.
+
+---
+
+## 12) 테스트
+
+- 통합: `@SpringBootTest`
+- 슬라이스: `@DataJpaTest`, `@WebMvcTest`, `@RestClientTest`, `@JsonTest`
+- 설정: `@ActiveProfiles("test")`, `@AutoConfigureMockMvc`, `@AutoConfigureTestDatabase`
+- 목 주입: `@MockBean`, `@SpyBean`
+- SQL: `@Sql`(테스트 전후 스크립트 실행)
+- 테스트 전용 설정: `@TestConfiguration`(테스트 컨텍스트에만 빈 등록)
+
+**실무 팁**
+- 슬라이스 테스트로 빠르게, 통합 테스트로 중요 시나리오 커버.
+- 컨텍스트 캐시를 활용해 테스트 속도 최적화(@DirtiesContext 남용 주의).
+
+---
+
+## 13) API 문서화 (springdoc-openapi)
+
+- `@Operation(summary="...", description="...")`
+- `@ApiResponse(responseCode="200", description="...")`
+- `@Schema(implementation = DTO.class)`, `@Parameter(name="...", description="...")`, `@Tag(name="...")`
+- **주의**: 패키지 충돌 방지(내 커스텀 클래스와 이름 겹치지 않게 FQN 사용).
+
+---
+
+## 14) 보조 라이브러리(실무에서 흔함)
+
+- **Lombok**: `@Getter`, `@Setter`, `@Builder`, `@RequiredArgsConstructor`, `@Slf4j` 등 → 보일러플레이트 제거
+- **MapStruct**: `@Mapper`(DTO ↔ 엔티티 매핑)
+- **Jakarta Validation**: 엔티티/DTO 제약
+
+> 보조 라이브러리는 팀 컨벤션에 맞춰 도입. 롬복은 **필드 주입 금지**, **생성자 주입 + `@RequiredArgsConstructor`**가 기본.
+
+---
+
+## 부록) 자주 하는 실수 & 체크리스트
+
+- [ ] `@Transactional` **자기호출**로 미적용 → **다른 빈 분리** 또는 `TransactionTemplate` 사용
+- [ ] `@Valid/@Validated` 누락 → 검증이 동작하지 않음(컨트롤러 메서드 파라미터에 적용)
+- [ ] DTO에 `@NotBlank` 쓰려면 **의존성(jakarta.validation)** 포함
+- [ ] 스캔 범위: `@SpringBootApplication`을 **루트 패키지**에 두었는가
+- [ ] `@Repository` 예외 변환으로 JPA 예외를 스프링 DataAccessException으로 통합
+- [ ] `@EntityGraph`로 N+1 완화, 혹은 명시 fetch join 사용
+- [ ] 캐시/스케줄/비동기 도입 시 스레드 풀/TTL/예외 처리 정책 문서화
+
+</details>
