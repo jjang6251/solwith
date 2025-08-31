@@ -339,5 +339,111 @@ public String createToken(String username, String role) {
 
 </details>
 
+<details>
+<summary>AOP_Execution_Logging</summary>
+
+# AOP 기반 실행 시간 & 입력값 로깅 (Spring Boot)
+
+## 1. 목표
+- 메서드 실행 시간을 자동으로 측정하여 로깅한다.
+- 입력값을 함께 기록하되, **민감 정보(password, token 등)는 마스킹 처리**한다.
+- traceId와 연계하여 **장애 추적**을 쉽게 만든다.
+
+---
+
+## 2. 주요 컴포넌트
+
+### 2.1 @LogExecutionTime (커스텀 애노테이션)
+```java
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface LogExecutionTime { }
+```
+
+→ 메서드 위에 붙이면 AOP가 동작한다.
+
+### 2.2 LoggingAspect (AOP 구현체)
+- `@Around` advice로 메서드 전후를 감싼다.
+- 실행 시간 = `System.currentTimeMillis()`로 측정
+- 입력 파라미터 로깅 시 민감 정보(`password`, `token`, `secret` 등)는 `***` 처리
+- 반환값은 크면 타입만 기록
+- traceId(MDC)에 함께 기록하여 로그 상관관계 추적 가능
+
+```java
+@Around("@annotation(com.example.solwith.aop.LogExecutionTime)")
+public Object around(ProceedingJoinPoint pjp) throws Throwable {
+    long start = System.currentTimeMillis();
+    // ... 실행 전 로깅
+    Object result = pjp.proceed();
+    long took = System.currentTimeMillis() - start;
+    // ... 실행 후 로깅
+    return result;
+}
+```
+
+---
+
+## 3. 동작 순서
+
+1. 클라이언트가 요청 → `TraceIdFilter`에서 traceId를 생성하고 MDC에 저장
+2. 컨트롤러/서비스 메서드에 `@LogExecutionTime`이 있으면 `LoggingAspect`가 가로챈다
+3. 메서드 실행 전: 파라미터를 문자열로 변환하여 로깅 (민감값은 `***`)
+4. 실제 비즈니스 로직 실행 (`pjp.proceed()`)
+5. 실행 후: 실행 시간(ms), 반환 타입, traceId와 함께 로깅
+6. 예외 발생 시: 실행 시간 + 예외명 + 메시지를 warn 레벨로 기록
+
+---
+
+## 4. 로그 예시
+
+```
+[AOP] MemberService.findOne took=123ms traceId=abc-123 args=id=10 resultType=Member
+[AOP] MemberService.join EX took=45ms traceId=abc-456 args=name=kim,password=*** ex=IllegalStateException:이미 존재
+```
+
+---
+
+## 5. 적용 방법
+
+### 5.1 서비스 메서드에 적용
+```java
+@LogExecutionTime
+public Member findOne(Long id) {
+    // ...
+}
+```
+
+### 5.2 로그 패턴 설정 (logback-spring.xml)
+```xml
+<property name="PATTERN" value="[%d{yyyy-MM-dd HH:mm:ss.SSS}] %-5level [%X{traceId}] %logger{36} - %msg%n"/>
+```
+
+---
+
+## 6. 운영 TIP
+
+- **민감 정보 마스킹 규칙**: `password`, `token`, `secret`, `authorization` 등은 반드시 `***` 처리
+- **traceId 연계**: 필수적으로 로그 패턴에 `%X{traceId}`를 포함시켜야 한다.
+- **AOP 적용 범위**: 서비스/레포지토리/외부 연동 호출에 주로 붙여서 성능/장애 모니터링에 활용
+- **Spring Boot AOP Starter** 사용 시 `@EnableAspectJAutoProxy`는 필요 없음.
+- 반환값이 큰 객체는 타입명만 출력하여 로그 오염 방지.
+
+---
+
+## 7. 체크리스트
+
+- [ ] `@LogExecutionTime`이 필요한 메서드에 붙였는가?
+- [ ] 로그 패턴에 `%X{traceId}`가 들어갔는가?
+- [ ] 민감 파라미터 마스킹이 잘 되는가?
+- [ ] 반환값 로그가 과도하게 크지 않은가?
+- [ ] 예외 발생 시 warn/error 레벨로 기록되는가?
+
+---
+
+## 8. 결론
+
+- `@LogExecutionTime` + `LoggingAspect`를 통해 **운영 가시성**을 확보할 수 있다.
+- traceId + 실행 시간 + 입력값/반환값을 로그에 남겨 **장애 분석과 성능 최적화**에 큰 도움이 된다.
+</details>
 
 
