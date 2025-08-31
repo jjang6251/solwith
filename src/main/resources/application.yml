@@ -1,0 +1,19 @@
+# src/main/resources/application.yml
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/demo?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: root
+    password: assa2237
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create   # 처음엔 create로 시작하고 운영은 validate/update로 전환
+    open-in-view: false
+    show-sql: true
+    properties:
+      hibernate.format_sql: true
+      hibernate.jdbc.batch_size: 50
+
+logging.level.org.hibernate.SQL: debug
+logging.level.org.hibernate.orm.jdbc.bind: trace
