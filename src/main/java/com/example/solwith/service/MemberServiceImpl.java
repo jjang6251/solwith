@@ -1,5 +1,6 @@
 package com.example.solwith.service;
 
+import com.example.solwith.aop.LogExecutionTime;
 import com.example.solwith.domain.Member;
 import com.example.solwith.repository.MemberRepository;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ public class MemberServiceImpl implements MemberService{
         return memberRepository.findAll();
     }
 
+    @LogExecutionTime
     @Override
     public Member findOne(Long id) {
         return memberRepository.findById(id).orElse(null);
