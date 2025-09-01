@@ -1,4 +1,4 @@
-package com.example.solwith.product;
+package com.example.solwith.Optiproduct;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

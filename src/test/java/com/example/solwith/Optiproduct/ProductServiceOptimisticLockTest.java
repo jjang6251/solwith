@@ -1,4 +1,4 @@
-package com.example.solwith.product;
+package com.example.solwith.Optiproduct;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;

@@ -1,4 +1,4 @@
-package com.example.solwith.product;
+package com.example.solwith.PessiProduct;
 
 import jakarta.persistence.*;
 import lombok.*;
@@ -13,19 +13,19 @@ public class Product {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable=false)
+    @Column(nullable = false)
     private String name;
 
     @Column(nullable = false)
     private int stock;
 
-    /** 낙관적 락을 위한 버전 컬럼 (자동 증분) */
+    // 선택: 있어도 되고 없어도 됨(낙관적 락 겸용)
     @Version
     private Long version;
 
     public void decrease(int qty) {
-        if(qty <= 0) throw new IllegalArgumentException("qty must be > 0");
-        if(stock < qty) throw new IllegalStateException("insufficient stock");
+        if(qty <= 0) throw new IllegalArgumentException("qty > 0");
+        if(stock < qty) throw new IllegalStateException("insufficient");
         this.stock -= qty;
     }
 
