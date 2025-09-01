@@ -1148,6 +1148,134 @@ public void decreaseWithRetry(Long id, int qty) {
 
 </details>
 
+<details>
+<summary>Pessimistic Lock</summary>
+
+# MySQL에서 비관적 락(Pessimistic Lock) 정리
+
+> Spring Boot 3 · Hibernate 6 · MySQL 8
+
+---
+
+## 1. 비관적 락이란?
+
+- 충돌 가능성을 **비관적으로 예상** → **DB가 실제로 행을 잠금**
+- 대표 SQL: `SELECT ... FOR UPDATE` (배타 락)
+- 특징
+  - 장점: Lost Update 원천 차단, 단순한 처리
+  - 단점: 락 대기/교착 가능성, 처리량 감소
+
+---
+
+## 2. 엔티티 (예시)
+
+```java
+@Entity
+public class Product {
+    @Id @GeneratedValue
+    private Long id;
+
+    private int stock;
+
+    public void decrease(int qty) {
+        if (stock < qty) throw new IllegalStateException("재고 부족");
+        this.stock -= qty;
+    }
+}
+```
+
+---
+
+## 3. Repository
+
+```java
+public interface ProductRepository extends JpaRepository<Product, Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Product p where p.id = :id")
+    Optional<Product> findByIdForUpdate(@Param("id") Long id);
+
+    // MySQL 8 전용: 잠겨 있으면 즉시 실패
+    @Query(value = "select * from products where id = :id for update nowait", nativeQuery = true)
+    Optional<Product> findByIdForUpdateNowait(@Param("id") Long id);
+}
+```
+
+---
+
+## 4. 서비스 로직
+
+```java
+@Service
+@RequiredArgsConstructor
+public class StockService {
+    private final ProductRepository repo;
+
+    @Transactional
+    public void decreaseWithPessimistic(Long id, int qty) {
+        Product p = repo.findByIdForUpdate(id).orElseThrow();
+        p.decrease(qty);
+    }
+
+    @Transactional
+    public void decreaseNowait(Long id, int qty) {
+        Product p = repo.findByIdForUpdateNowait(id).orElseThrow();
+        p.decrease(qty);
+    }
+}
+```
+
+- `decreaseWithPessimistic`: 기본 블로킹, 잠금이 해제될 때까지 대기
+- `decreaseNowait`: 잠겨 있으면 즉시 실패 → 상위에서 재시도/큐잉 설계 가능
+
+---
+
+## 5. 테스트 시나리오
+
+1) **블로킹 모드**
+  - A 스레드가 `FOR UPDATE`로 잠금 → B 스레드는 대기
+  - A 커밋 후 B 실행 → 순차적으로 안전하게 처리
+
+2) **NOWAIT 모드**
+  - A 스레드가 잠금 보유 중 → B 스레드 시도 시 **즉시 예외**
+  - 상위 레벨에서 재시도/실패 처리 가능
+
+---
+
+## 6. 주의사항
+
+- **교착(Deadlock) 방지**
+  - 자원 잠금 순서를 일관되게 설계
+  - 트랜잭션 최소화 (외부 API 호출, I/O 금지)
+  - 적절한 인덱스로 갭/넥스트키 락 범위 최소화
+
+- **타임아웃/실패 전략**
+  - `NOWAIT` : 즉시 실패 → 재시도 전략 설계 필요
+  - `SKIP LOCKED` : 잠긴 행은 건너뛰고 다른 데이터만 처리
+
+- **MySQL InnoDB 특성**
+  - 기본 격리수준: REPEATABLE READ
+  - 인덱스 미활용 시 불필요하게 넓은 범위(갭 락)까지 잠금
+
+---
+
+## 7. 낙관적 락 vs 비관적 락
+
+| 상황 | 추천 |
+|------|------|
+| 경합 낮음, 성능 중요 | **낙관적 락(@Version)** |
+| 경합 높음, 정확성 최우선 (재고/결제/포인트) | **비관적 락(PESSIMISTIC_WRITE)** |
+| 경합 높음 + 처리량 중요 | 비관적 락 + `NOWAIT` → 상위에서 재시도/큐 설계 |
+
+---
+
+### 결론
+
+비관적 락은 **실제 DB가 잠금을 걸어 안전성 확보**하는 방식.  
+대신 교착, 성능 저하 위험이 있으므로 **트랜잭션 범위를 최소화**하고,  
+**NOWAIT/ SKIP LOCKED** 같은 전략과 함께 사용하는 것이 실무에서 효과적이다.
+
+</details>
+
 ## Annotaion 정리
 <details>
 <summary>Annotation</summary>
