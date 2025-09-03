@@ -1276,6 +1276,99 @@ public class StockService {
 
 </details>
 
+<details>
+<summary>교착 상태(Deadlock) 재현과 해결 정리</summary>
+
+# 교착 상태(Deadlock) 재현과 해결 정리
+
+> Spring Boot 3 · Hibernate 6 · MySQL 8 · Testcontainers 기반  
+> Deadlock 재현 방법, 원인, 해결책을 실무 관점에서 정리한 문서
+> Deadlockimpl Folder
+
+---
+
+## 1. Deadlock 이란?
+
+- 두 개 이상의 트랜잭션이 서로가 보유한 자원을 기다리며 무한 대기에 빠지는 상태이다.
+- 예: 트랜잭션 A는 자원 1을 잠그고 자원 2를 기다리고, 트랜잭션 B는 자원 2를 잠그고 자원 1을 기다리는 경우이다.
+- DBMS(InnoDB)는 교착을 감지하면 트랜잭션 중 하나를 강제로 롤백시킨다.
+
+---
+
+## 2. Deadlock 재현
+
+### SQL 단에서 재현
+
+1) 두 개의 세션을 연다.
+2) 세션 A는 `SELECT * FROM item WHERE id=1 FOR UPDATE` 실행 후 `id=2`를 잠그려 한다.
+3) 세션 B는 `SELECT * FROM item WHERE id=2 FOR UPDATE` 실행 후 `id=1`을 잠그려 한다.
+4) 서로 대기하면서 교착이 발생하고, InnoDB가 감지하여 한쪽 트랜잭션을 롤백한다.
+
+### Spring Boot 테스트 코드에서 재현
+
+- JPA 리포지토리에 `@Lock(PESSIMISTIC_WRITE)`를 선언한다.
+- 서비스 레이어에서 A→B, B→A 순서로 잠그는 메서드를 각각 작성한다.
+- 두 스레드가 동시에 실행되도록 `CountDownLatch`를 사용한다.
+- 한쪽은 성공하고 다른 한쪽은 `DeadlockLoserDataAccessException` 예외가 발생한다.
+
+---
+
+## 3. Deadlock 발생 원인
+
+- 자원 잠금 순서가 불일치한 경우이다.
+- 트랜잭션 A는 (1→2) 순서로 잠그고, 트랜잭션 B는 (2→1) 순서로 잠그는 경우에 발생한다.
+- 상호 대기 조건(Circular Wait)이 충족되면서 교착 상태가 된다.
+
+---
+
+## 4. 해결 및 예방 전략
+
+### 4.1 잠금 순서 표준화
+
+- 항상 동일한 순서로 자원을 잠그도록 한다.
+- 예: id가 작은 것부터 큰 것 순서로 잠그는 규칙을 적용한다.
+
+### 4.2 트랜잭션 최소화
+
+- 트랜잭션 내에서 필요한 최소한의 DB 작업만 수행한다.
+- 외부 API 호출이나 I/O 작업은 트랜잭션 밖에서 수행한다.
+
+### 4.3 인덱스 설계
+
+- MySQL InnoDB는 인덱스를 타지 않으면 넓은 범위를 Gap/Next-Key Lock으로 잠근다.
+- 적절한 인덱스를 설계하여 잠금 범위를 최소화한다.
+
+### 4.4 실패 전략 선택
+
+- **대기(FOR UPDATE)**: 잠금이 풀릴 때까지 대기한다. 처리량 저하 위험이 있다.
+- **즉시 실패(NOWAIT)**: 잠겨 있으면 바로 실패한다. 상위에서 재시도 또는 큐잉으로 처리한다.
+- **SKIP LOCKED**: 잠긴 행은 건너뛰고 나머지 데이터만 처리한다.
+
+### 4.5 재시도 정책
+
+- Deadlock은 일시적 오류로 간주하고 재시도로 극복할 수 있다.
+- 스프링에서는 `DeadlockLoserDataAccessException`을 캐치하여 지수 백오프를 적용한다.
+- 주의: 자기 자신 호출이면 트랜잭션 프록시가 적용되지 않는다. 다른 빈으로 분리하거나 `TransactionTemplate`을 사용한다.
+
+---
+
+## 5. 운영 모니터링 포인트
+
+- Deadlock 발생 횟수와 평균 대기 시간 모니터링이 필요하다.
+- MySQL에서 `SHOW ENGINE INNODB STATUS`로 Deadlock 상세 정보를 확인할 수 있다.
+- `innodb_lock_wait_timeout`은 Deadlock 감지와는 별개로 단순 대기 타임아웃이다.
+
+---
+
+## 6. 요약
+
+- Deadlock은 서로 다른 순서로 동일 자원을 잠글 때 발생한다.
+- SQL과 스프링 테스트 코드 모두에서 쉽게 재현할 수 있다.
+- 예방의 핵심은 잠금 순서 표준화와 트랜잭션 최소화이다.
+- 불가피하게 발생하는 Deadlock은 재시도 정책으로 회복 가능하게 설계해야 한다.
+
+</details>
+
 ## Annotaion 정리
 <details>
 <summary>Annotation</summary>
